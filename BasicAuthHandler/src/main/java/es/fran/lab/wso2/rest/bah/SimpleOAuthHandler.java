@@ -5,19 +5,24 @@
  */
 package es.fran.lab.wso2.rest.bah;
 
+import java.util.Map;
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.client.Options;
 import org.apache.axis2.client.ServiceClient;
 import org.apache.axis2.context.ConfigurationContext;
+import org.apache.axis2.context.ConfigurationContextFactory;
 import org.apache.axis2.transport.http.HTTPConstants;
 import org.apache.axis2.transport.http.HttpTransportProperties;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.http.HttpHeaders;
 import org.apache.synapse.ManagedLifecycle;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.core.SynapseEnvironment;
+import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.wso2.carbon.identity.oauth2.stub.OAuth2TokenValidationServiceStub;
 import org.wso2.carbon.identity.oauth2.stub.dto.OAuth2TokenValidationRequestDTO;
+import org.wso2.carbon.identity.oauth2.stub.dto.OAuth2TokenValidationRequestDTO_OAuth2AccessToken;
 
 /**
  *
@@ -25,9 +30,12 @@ import org.wso2.carbon.identity.oauth2.stub.dto.OAuth2TokenValidationRequestDTO;
  */
 public class SimpleOAuthHandler extends AbstractHandler implements ManagedLifecycle {
     private static final Log    _log                = LogFactory.getLog(SimpleOAuthHandler.class);
-    private static final String _OAUTH_TOKEN_VALIDATOR_SERVER = "oauth2TokenValidationService";
-    private static final String _IDP_LOGIN_USERNAME           = "identityServerUserName";
-    private static final String _IDP_LOGIN_PASSWORD           = "identityServerPw";
+    private static final String _OAUTH_TOKEN_VALIDATOR_SERVER   = "oauth2TokenValidationService";
+    private static final String _OAUTH_HEADER_SPLITER           = ",";
+    private static final String _CONSUMER_KEY_HEADER            = "Bearer";
+    private static final String _CONSUMER_KEY_SEGMENT_DELIMITER = " ";
+    private static final String _IDP_LOGIN_USERNAME             = "identityServerUserName";
+    private static final String _IDP_LOGIN_PASSWORD             = "identityServerPw";
 
     private ConfigurationContext _configContext;
 
@@ -70,7 +78,69 @@ public class SimpleOAuthHandler extends AbstractHandler implements ManagedLifecy
      * @return
      */
     private OAuth2TokenValidationRequestDTO _createOAuthValidatorDTO(final MessageContext m) {
+        OAuth2TokenValidationRequestDTO result = new OAuth2TokenValidationRequestDTO();
+
+        Map headers = (Map) ((Axis2MessageContext) m).getAxis2MessageContext().getProperty(org.apache.axis2.context.MessageContext.TRANSPORT_HEADERS);
+
+        final String key = (headers != null) ? _extractKey(headers) : null;
+
+        OAuth2TokenValidationRequestDTO_OAuth2AccessToken token = new OAuth2TokenValidationRequestDTO_OAuth2AccessToken();
+
+        token.setTokenType ("bearer");
+        token.setIdentifier(key);
+
+        result.setAccessToken(token);
+
+        return result;
+    }
+
+    /**
+     *
+     * @param headers
+     * @return
+     */
+    private String _extractKey(final Map headers) {
+        String authHeader;
+
+        if ((authHeader = (String) headers.get(HttpHeaders.AUTHORIZATION)) == null) return null;
+
+        if (authHeader.startsWith("OAuth ") || authHeader.startsWith("oauth "))
+        {
+            authHeader = authHeader.substring(authHeader.indexOf("o"));
+        }
+
+        String[] h = authHeader.split(_OAUTH_HEADER_SPLITER);
+
+        if (h != null)
+        {
+            for (String header : h)
+            {
+                String[] elements = header.split(_CONSUMER_KEY_SEGMENT_DELIMITER);
+                if (elements != null && elements.length > 1)
+                {
+                    boolean isConsumerKeyAvailable = false;
+
+                    for (String element : elements)
+                    {
+                        if (!"".equals(element.trim()))
+                        {
+                            if (_CONSUMER_KEY_HEADER.equals(element.trim())) isConsumerKeyAvailable = true;
+                            else if (isConsumerKeyAvailable) return _removeLeadingAndTrailing(element.trim());
+                        }
+                    }
+                }
+            }
+        }
+
         return null;
+    }
+
+    private String _removeLeadingAndTrailing(final String s) {
+        String result = s;
+
+        if (s.startsWith("\"") || s.endsWith("\"")) result = s.replace("\"", "");
+
+        return result.trim();
     }
 
     /**************************************************************************/
@@ -129,12 +199,18 @@ public class SimpleOAuthHandler extends AbstractHandler implements ManagedLifecy
 
     @Override
     public void init(SynapseEnvironment se) {
-        throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
+        try
+        {
+            _configContext = ConfigurationContextFactory.createConfigurationContextFromFileSystem(null, null);
+        }
+        catch (AxisFault e)
+        {
+            _log.error("Error initializing configuration context!!", e);
+        }
     }
 
     @Override
     public void destroy() {
-        throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
+        _configContext = null;
     }
-
 }
